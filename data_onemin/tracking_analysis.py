@@ -1,4 +1,5 @@
 import glob
+from os import close
 import re
 from collections import deque
 
@@ -19,22 +20,15 @@ def calculate_distances(keypoint_dataframe, keypoint_num):
         for row_i, row in frame.iterrows():  # for each person in current frame
             closest_dist = None
             second_closest_dist = None
-            morethan0 = False
             index_closest = None
             if list(row[1:3]) != [0, 0]:  # If x and y are 0, OpenPose didn't detect the keypoint
                 for lag in range(-1, -len(prev_frames) - 1, -1):  # Look backward in time
                     for indexn, rown in prev_frames[lag].iterrows():
-                        if not morethan0:
-                            closest_dist = distance.euclidean([row[1:3]], [rown[1:3]])
+                        dist = distance.euclidean([row[1:3]], [rown[1:3]])
+                        if closest_dist is None or dist < closest_dist:
+                            second_closest_dist = closest_dist
+                            closest_dist = dist
                             index_closest = indexn
-                            if closest_dist > 0:
-                                morethan0 = True
-                        if morethan0:
-                            dist = distance.euclidean([row[1:3]], [rown[1:3]])
-                            if dist < closest_dist:
-                                second_closest_dist = closest_dist
-                                closest_dist = dist
-                                index_closest = indexn
                     if closest_dist < 10:
                         break  # Close enough; stop looking further back
             matches.at[row_i, ['closest_index', 'closest_dist', 'second_closest_dist']] = \
