@@ -1,5 +1,4 @@
 import glob
-from operator import index
 import re
 from collections import deque
 
@@ -12,7 +11,7 @@ from tqdm import tqdm
 def calculate_distances(keypoint_dataframe, keypoint_num):
     matches = pd.DataFrame(index=keypoint_dataframe.index)
     matches['frame_num'] = keypoint_dataframe.frame_num
-    prev_frames = deque(maxlen=10)
+    prev_frames = deque(maxlen=5)
     frame_iter = iter(keypoint_dataframe.groupby(['frame_num']))
     prev_frames.append(next(frame_iter)[1])  # Skip to starting on second frame
     for _, frame in tqdm(frame_iter, total=keypoint_dataframe.frame_num.nunique() - 1,
@@ -23,18 +22,21 @@ def calculate_distances(keypoint_dataframe, keypoint_num):
             morethan0 = False
             index_closest = None
             if list(row[1:3]) != [0, 0]:  # If x and y are 0, OpenPose didn't detect the keypoint
-                for indexn, rown in prev_frames[-1].iterrows():
-                    if not morethan0:
-                        closest_dist = distance.euclidean([row[1:3]], [rown[1:3]])
-                        index_closest = indexn
-                        if closest_dist > 0:
-                            morethan0 = True
-                    if morethan0:
-                        dist = distance.euclidean([row[1:3]], [rown[1:3]])
-                        if dist < closest_dist:
-                            second_closest_dist = closest_dist
-                            closest_dist = dist
+                for lag in range(-1, -len(prev_frames) - 1, -1):  # Look backward in time
+                    for indexn, rown in prev_frames[lag].iterrows():
+                        if not morethan0:
+                            closest_dist = distance.euclidean([row[1:3]], [rown[1:3]])
                             index_closest = indexn
+                            if closest_dist > 0:
+                                morethan0 = True
+                        if morethan0:
+                            dist = distance.euclidean([row[1:3]], [rown[1:3]])
+                            if dist < closest_dist:
+                                second_closest_dist = closest_dist
+                                closest_dist = dist
+                                index_closest = indexn
+                    if closest_dist < 10:
+                        break  # Close enough; stop looking further back
             matches.at[row_i, ['closest_index', 'closest_dist', 'second_closest_dist']] = \
                 [index_closest, closest_dist, second_closest_dist]
         prev_frames.append(frame)
