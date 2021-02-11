@@ -8,14 +8,17 @@ from scipy.spatial import distance
 # Calculate closest distance, closest distance owner, second closest distance, second closest
 # distance owner
 def calculate_distances(keypoint_dataframe, keypoint_num):
-    for frame in keypoint_dataframe.groupby(['frame_num']):
-        for index, row in frame[1].iterrows():  # for each person in current frame
+    nextframe_iter = iter(keypoint_dataframe.groupby(['frame_num']))
+    next(nextframe_iter)  # Discard first frame to skip one frame into the future
+    for _, frame in keypoint_dataframe.groupby(['frame_num']):
+        _, next_frame = next(nextframe_iter)
+        for index, row in frame.iterrows():  # for each person in current frame
             closest_dist = None
             second_closest_dist = None
             morethan0 = False
             index_closest = None
             if list(row[1:3]) != [0, 0]:  # If x and y are 0, OpenPose didn't detect the keypoint
-                for indexn, rown in keypoint_dataframe[keypoint_dataframe.frame_num == (int(frame[0]+1))].iterrows():
+                for indexn, rown in next_frame.iterrows():
                     if not morethan0:
                         closest_dist = distance.euclidean([row[1:3]], [rown[1:3]])
                         index_closest = indexn
