@@ -14,12 +14,14 @@ detected_kps = {i: set([k for k in keypoints if r[k + '_detected']])
                 for i, r in tqdm(df.iterrows(), 'Counting detected keypoints', total=len(df))}
 # Go through frames in reverse order to follow links to earlier frames. Then, if we reach a frame
 # that has no frames linked to it, assign a new person ID. Alternatively, if we reach a frame that
-# has multiple frames linked to it, resolve the ambiguity issue somehow.
+# has multiple frames linked to it, resolve the ambiguity via voting for the most keypoints matched.
 proposed_ids = defaultdict(set)
+df.insert(2, 'person_id', '')
+df.insert(3, 'new_id', 0)
 for row_i, row in df[::-1].iterrows():
     # Select keypoints that were good enough matches to participate in the overall match decision
-    ambiguous_kps = [k for k in keypoints if row[k + '_second_closest_dist'] < 10]
-    voting_kps = [k for k in keypoints if row[k + '_closest_dist'] < 10 and k not in ambiguous_kps]
+    ambiguous_kps = [k for k in keypoints if row[k + '_second_closest_dist'] < 15]
+    voting_kps = [k for k in keypoints if row[k + '_closest_dist'] < 15 and k not in ambiguous_kps]
     # TODO: Do a follow-up pass to merge skeletons in the same frame with the same person_id
 
     # First try to assign a final ID to the current row based on its matches
