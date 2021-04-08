@@ -14,7 +14,7 @@ def calculate_distances(keypoint_df, keypoint_num):
     # Count low-confidence detections as non-detections because they can be misleading
     matches[keypoint_num + '_detected'] = \
         (keypoint_df[keypoint_num + '_conf'] > .3).astype(int)
-    prev_frames = deque(maxlen=5)
+    prev_frames = deque(maxlen=5)  # Number of frames into the past to search for matches
     # Iterate over only successful detection rows to prevent matches to low-confidence skeletons
     frame_iter = iter(keypoint_df[matches[keypoint_num + '_detected'] == 1].groupby(['frame_num']))
     prev_frames.append(next(frame_iter)[1])  # Skip to starting on second frame
@@ -31,7 +31,7 @@ def calculate_distances(keypoint_df, keypoint_num):
                         second_closest_dist = closest_dist
                         closest_dist = dist
                         index_closest = indexn
-                if closest_dist < 10:
+                if closest_dist < 15:
                     break  # Close enough; stop looking further back
             matches.at[row_i, [keypoint_num + '_closest_index', keypoint_num + '_closest_dist',
                                keypoint_num + '_second_closest_dist']] = \
@@ -50,6 +50,6 @@ for file in fileslist:
     for key, value in keypoint_dfs.items():
         dist_df = calculate_distances(value, key)
         # TODO: Change all the input/output filenames and parameters to argparse
-        # TODO: Change the arbitrary 10px distance threshold to something auto-detected
+        # TODO: Change the arbitrary 15px distance threshold to something auto-detected
         result_df[dist_df.columns] = dist_df
         result_df.to_csv(file + '-match_indices.csv', index_label='orig_index')
