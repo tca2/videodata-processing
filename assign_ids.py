@@ -22,7 +22,6 @@ for row_i, row in df[::-1].iterrows():
     # Select keypoints that were good enough matches to participate in the overall match decision
     ambiguous_kps = [k for k in keypoints if row[k + '_second_closest_dist'] < 15]
     voting_kps = [k for k in keypoints if row[k + '_closest_dist'] < 15 and k not in ambiguous_kps]
-    # TODO: Do a follow-up pass to merge skeletons in the same frame with the same person_id
 
     # First try to assign a final ID to the current row based on its matches
     if row_i in proposed_ids.keys():
