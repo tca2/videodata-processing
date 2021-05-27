@@ -53,13 +53,18 @@ for pid, pid_df in tqdm(df.groupby('person_id'), 'Interpolating', total=df.perso
         for col in pid_df.columns:
             new_df.insert(len(new_df.columns), col, pd.Series(dtype=pid_df[col].dtype))
         new_df.loc[pid_df.frame_num] = pid_df.values
+        new_df['person_id'] = pid
         # Interpolate only the position columns we care about
-        new_df[coord_columns] = new_df[coord_columns].interpolate()
-        assert not new_df[coord_columns].isna().any().any(), 'Interpolating skeletons failed'
+        interp_columns = ['frame_num'] + coord_columns
+        new_df[interp_columns] = new_df[interp_columns].interpolate()
+        assert not new_df[interp_columns].isna().any().any(), 'Interpolating skeletons failed'
         interpolated_dfs.append(new_df)
 
 # Merge interpolated values to form combined DataFrame
-print('Saving')
+print('Concatenating')
 interpolated_df = pd.concat(interpolated_dfs)
+interpolated_df.insert(4, 'is_interpolated', interpolated_df.orig_index.isna().astype(int))
+interpolated_df.loc[interpolated_df.is_interpolated.astype(bool), 'new_id'] = 0
+print('Saving')
 interpolated_df.to_csv('14_11_10_Green_20to21min.csv-match_indices.csv-ids.csv-postprocessed.csv',
                        index=False)
