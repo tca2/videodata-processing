@@ -19,9 +19,13 @@ def calculate_distances(keypoint_df, keypoint_num):
         (keypoint_df[keypoint_num + '_conf'] > .3).astype(int)
     prev_frames = deque(maxlen=5)  # Number of frames into the past to search for matches TODO: Make an arg
     # Iterate over only successful detection rows to prevent matches to low-confidence skeletons
-    frame_iter = iter(keypoint_df[matches[keypoint_num + '_detected'] == 1].groupby(['frame_num']))
-    prev_frames.append(next(frame_iter)[1])  # Skip to starting on second frame
-    for _, frame in tqdm(frame_iter, total=keypoint_df.frame_num.nunique() - 1,
+    detected_df = keypoint_df[matches[keypoint_num + '_detected'] == 1]
+    frame_iter = iter(detected_df.groupby(['frame_num']))
+    try:
+        prev_frames.append(next(frame_iter)[1])  # Skip to starting on second frame
+    except StopIteration:  # No usable data for this keypoint
+        pass
+    for _, frame in tqdm(frame_iter, total=detected_df.frame_num.nunique() - 1,
                          desc='Matching ' + str(keypoint_num)):
         for row_i, row in frame.iterrows():  # for each person in current frame
             closest_dist = None
@@ -40,13 +44,15 @@ def calculate_distances(keypoint_df, keypoint_num):
                                keypoint_num + '_second_closest_dist']] = \
                 [index_closest, closest_dist, second_closest_dist]
         prev_frames.append(frame)
-    return matches
+    return matches.drop(columns='frame_num')
 
 
 # Based on a set of closest/second-closest distances, try to assign person IDs
-def assign_person_ids(matches_df, keypoints):
+def assign_person_ids(matches_df):
     df = matches_df.copy()
     # Precalculate sets of detected keypoints to improve speed
+    keypoints = [c.replace('_closest_index', '') for c in matches_df.columns
+                 if c.endswith('_closest_index')]
     detected_kps = {i: set([k for k in keypoints if r[k + '_detected']])
                     for i, r in tqdm(df.iterrows(), 'Counting detected keypoints', total=len(df))}
     # Go through frames in reverse order to follow links to earlier frames. Then, if we reach a
@@ -54,8 +60,8 @@ def assign_person_ids(matches_df, keypoints):
     # frame that has multiple frames linked to it, resolve the ambiguity via voting for the most
     # keypoints matched.
     proposed_ids = defaultdict(set)
-    df.insert(2, 'person_id', '')
-    df.insert(3, 'new_id', 0)
+    df.insert(1, 'person_id', '')
+    df.insert(2, 'new_id', 0)
     for row_i, row in df[::-1].iterrows():
         # Select keypoints that were good enough matches to participate in the overall match vote
         ambig_kps = [k for k in keypoints if row[k + '_second_closest_dist'] < 15]
@@ -93,8 +99,10 @@ def assign_person_ids(matches_df, keypoints):
     return df
 
 
-def postprocess_ids(ids_df, orig_df, keypoints):
+def postprocess_ids(ids_df, orig_df):
     df = ids_df.copy()
+    keypoints = [c.replace('_closest_index', '') for c in df.columns
+                 if c.endswith('_closest_index')]
     coord_columns = [kp + '_x' for kp in keypoints] + [kp + '_y' for kp in keypoints]
     df[coord_columns] = orig_df[coord_columns]
 
@@ -127,7 +135,8 @@ def postprocess_ids(ids_df, orig_df, keypoints):
 
     # Interpolate missing skeletons
     interpolated_dfs = []
-    for _, pid_df in tqdm(df.groupby('person_id'), 'Interpolating', total=df.person_id.nunique()):
+    coord_columns = ['frame_num'] + coord_columns  # Interpolate frame number as well
+    for pid, pid_df in tqdm(df.groupby('person_id'), 'Interpolating', total=df.person_id.nunique()):
         # Use Pandas built-in interpolate by constructing a DataFrame for this person that includes
         # NaNs where appropriate for the rows to be interpolated
         if pid_df.frame_num.max() - pid_df.frame_num.min() == len(pid_df) - 1:
@@ -136,10 +145,11 @@ def postprocess_ids(ids_df, orig_df, keypoints):
         else:
             new_df = pd.DataFrame(
                 index=np.arange(pid_df.frame_num.min(), pid_df.frame_num.max() + 1))
-            for col in pid_df.columns:
+            for col in pid_df.columns:  # Copy over column structure
                 new_df.insert(len(new_df.columns), col, pd.Series(dtype=pid_df[col].dtype))
-            new_df.loc[pid_df.frame_num] = pid_df.values
-            # Interpolate only the position columns we care about
+            new_df.loc[pid_df.frame_num] = pid_df.values  # Copy existing data
+            new_df['person_id'] = pid  # Fill in any gaps
+            # Interpolate only the frame number and position columns
             new_df[coord_columns] = new_df[coord_columns].interpolate()
             assert not new_df[coord_columns].isna().any().any(), 'Interpolating skeletons failed'
             interpolated_dfs.append(new_df)
@@ -148,21 +158,30 @@ def postprocess_ids(ids_df, orig_df, keypoints):
     return pd.concat(interpolated_dfs)
 
 
-def track_file(fname):
+def track_file(fname, region):
     # Load data and apply the first step: forming a rough linked list of closest distances
     df = pd.read_csv(fname)
-    # TODO: Restrict keypoints to only certain ones for speed/accuracy improvement
     keypoints = [c.replace('_x', '') for c in df.columns if re.search(r'^keypoint\d*_x', c)]
+    # If using a specific region, use only keypoints from that region; all keypoints from the
+    # skeleton must be in this region
+    if region:
+        orig_row_count = len(df)
+        x1, y1, x2, y2 = region
+        for kp in keypoints:
+            df = df[((df[kp + '_x'] == 0) | ((df[kp + '_x'] > x1) & (df[kp + '_x'] < x2))) &
+                    ((df[kp + '_y'] == 0) | ((df[kp + '_y'] > y1) & (df[kp + '_y'] < y2)))]
+        print('Selected', len(df), 'of', orig_row_count, 'rows from region:', region)
+    # TODO: Restrict keypoints to only certain ones for speed/accuracy improvement
     keypoint_dfs = {c: df[['frame_num', c + '_x', c + '_y', c + '_conf']] for c in keypoints}
-    dist_df = pd.DataFrame(index=df.index)
-    for key, value in keypoint_dfs.items():
-        kp_dist_df = calculate_distances(value, key)
+    dist_df = pd.DataFrame({'frame_num': df.frame_num})
+    for kp, kp_df in keypoint_dfs.items():
+        kp_dist_df = calculate_distances(kp_df, kp)
         dist_df[kp_dist_df.columns] = kp_dist_df
 
     # Assign person IDs
-    ids_df = assign_person_ids(dist_df, keypoints)
+    ids_df = assign_person_ids(dist_df)
     # Postprocess the ID assignment a bit further
-    return postprocess_ids(ids_df, df, keypoints)
+    return postprocess_ids(ids_df, df)
 
 
 if __name__ == '__main__':
@@ -176,13 +195,17 @@ if __name__ == '__main__':
                         help='Apply OpenPose only, do not track')
     parser.add_argument('--only_track', action='store_true',
                         help='Apply tracking to OpenPose output')
+    parser.add_argument('--region', nargs=4, type=int,
+                        metavar=('X_LEFT', 'Y_TOP', 'X_RIGHT', 'Y_BOTTOM'),
+                        help='Only do tracking in a region of the video; the person must be '
+                             'entirely in the given region to be tracked')
     args = parser.parse_args()
 
     if args.file:
         if not args.only_track:  # Do OpenPose
             raise NotImplementedError('OpenPose tracking not yet implemented')
         if not args.only_openpose:  # Do tracking
-            df = track_file(args.file)
+            df = track_file(args.file, args.region)
             df.to_csv(args.file + '-tracked.csv', index=False)  # TODO: allow output folder as arg
     else:
         raise NotImplementedError('--dir functionality not yet implemented')
