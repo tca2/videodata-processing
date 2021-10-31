@@ -61,7 +61,6 @@ def assign_person_ids(matches_df):
     # keypoints matched.
     proposed_ids = defaultdict(set)
     df.insert(1, 'person_id', '')
-    df.insert(2, 'new_id', 0)
     for row_i, row in df[::-1].iterrows():
         # Select keypoints that were good enough matches to participate in the overall match vote
         ambig_kps = [k for k in keypoints if row[k + '_second_closest_dist'] < 15]
@@ -77,7 +76,7 @@ def assign_person_ids(matches_df):
                     print('Extra-ambiguous match for row', row_i, '- matches:', proposed_ids[row_i])
                 df.at[row_i, 'person_id'] = ranked_ids[0][0]
         else:  # No matches for this row; start a new ID
-            df.at[row_i, ['person_id', 'new_id']] = ['idx' + str(row_i), 1]
+            df.at[row_i, 'person_id'] = 'idx' + str(row_i)
 
         # Count votes for matches to other rows
         tally = row[[k + '_closest_index' for k in voting_kps]].value_counts()
