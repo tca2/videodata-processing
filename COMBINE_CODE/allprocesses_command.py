@@ -11,13 +11,13 @@ from tqdm import tqdm
 
 
 # Calculate closest distance, closest distance owner, second closest distance
-def calculate_distances(keypoint_df, keypoint_num):
+def calculate_distances(keypoint_df, keypoint_num, lookback):
     matches = pd.DataFrame(index=keypoint_df.index)
     matches['frame_num'] = keypoint_df.frame_num
     # Count low-confidence detections as non-detections because they can be misleading
     matches[keypoint_num + '_detected'] = \
         (keypoint_df[keypoint_num + '_conf'] > .3).astype(int)
-    prev_frames = deque(maxlen=5)  # Number of frames into the past to search for matches TODO: Make an arg
+    prev_frames = deque(maxlen=lookback)  # Number of frames into the past to search for matches
     # Iterate over only successful detection rows to prevent matches to low-confidence skeletons
     detected_df = keypoint_df[matches[keypoint_num + '_detected'] == 1]
     frame_iter = iter(detected_df.groupby(['frame_num']))
@@ -157,7 +157,7 @@ def postprocess_ids(ids_df, orig_df):
     return pd.concat(interpolated_dfs)
 
 
-def track_file(fname, region):
+def track_file(fname, region, lookback):
     # Load data and apply the first step: forming a rough linked list of closest distances
     df = pd.read_csv(fname)
     keypoints = [c.replace('_x', '') for c in df.columns if re.search(r'^keypoint\d*_x', c)]
@@ -174,7 +174,7 @@ def track_file(fname, region):
     keypoint_dfs = {c: df[['frame_num', c + '_x', c + '_y', c + '_conf']] for c in keypoints}
     dist_df = pd.DataFrame({'frame_num': df.frame_num})
     for kp, kp_df in keypoint_dfs.items():
-        kp_dist_df = calculate_distances(kp_df, kp)
+        kp_dist_df = calculate_distances(kp_df, kp, lookback)
         dist_df[kp_dist_df.columns] = kp_dist_df
 
     # Assign person IDs
@@ -198,13 +198,15 @@ if __name__ == '__main__':
                         metavar=('X_LEFT', 'Y_TOP', 'X_RIGHT', 'Y_BOTTOM'),
                         help='Only do tracking in a region of the video; the person must be '
                              'entirely in the given region to be tracked')
+    parser.add_argument('--lookback', type=int, default=5,
+                        help='Look back up to this many frames to find matches (default 5)')
     args = parser.parse_args()
 
     if args.file:
         if not args.only_track:  # Do OpenPose
             raise NotImplementedError('OpenPose tracking not yet implemented')
         if not args.only_openpose:  # Do tracking
-            df = track_file(args.file, args.region)
+            df = track_file(args.file, args.region, args.lookback)
             df.to_csv(args.file + '-tracked.csv', index=False)  # TODO: allow output folder as arg
     else:
         raise NotImplementedError('--dir functionality not yet implemented')
