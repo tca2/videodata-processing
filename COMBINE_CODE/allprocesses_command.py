@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 from scipy.spatial import distance
 from tqdm import tqdm
+import os.path
 
 
 # Calculate closest distance, closest distance owner, second closest distance
@@ -170,6 +171,8 @@ def track_file(fname, region, lookback):
             df = df[((df[kp + '_x'] == 0) | ((df[kp + '_x'] > x1) & (df[kp + '_x'] < x2))) &
                     ((df[kp + '_y'] == 0) | ((df[kp + '_y'] > y1) & (df[kp + '_y'] < y2)))]
         print('Selected', len(df), 'of', orig_row_count, 'rows from region:', region)
+        global regionvals
+        regionvals = region
     # TODO: Restrict keypoints to only certain ones for speed/accuracy improvement
     keypoint_dfs = {c: df[['frame_num', c + '_x', c + '_y', c + '_conf']] for c in keypoints}
     dist_df = pd.DataFrame({'frame_num': df.frame_num})
@@ -200,13 +203,20 @@ if __name__ == '__main__':
                              'entirely in the given region to be tracked')
     parser.add_argument('--lookback', type=int, default=5,
                         help='Look back up to this many frames to find matches (default 5)')
+    parser.add_argument('--outputfolder', type=str, default='',
+                        help='Folder destination (relative or absolute path) to save the output (default is current directory)')
     args = parser.parse_args()
 
     if args.file:
         if not args.only_track:  # Do OpenPose
             raise NotImplementedError('OpenPose tracking not yet implemented')
         if not args.only_openpose:  # Do tracking
-            df = track_file(args.file, args.region, args.lookback)
-            df.to_csv(args.file + '-tracked.csv', index=False)  # TODO: allow output folder as arg
-    else:
-        raise NotImplementedError('--dir functionality not yet implemented')
+            if args.region:  # Do tracking while restricting to user defined region
+                df = track_file(args.file, args.region, args.lookback)
+                df.to_csv(args.outputfolder+'/'+args.file + '-tracked-region-'+str(regionvals)+'.csv', index=False)
+            else: # Do tracking without restricting region
+                df = track_file(args.file, args.region, args.lookback)
+                df.to_csv(args.outputfolder+'/'+args.file + '-tracked.csv', index=False)
+
+        else:
+            raise NotImplementedError('--dir functionality not yet implemented')
