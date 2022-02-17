@@ -43,7 +43,8 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
                 if closest_dist is None or two_closest.iloc[0] < closest_dist:
                     closest_dist = two_closest.iloc[0]
                     index_closest = two_closest.index[0]
-                    second_closest_dist = two_closest.iloc[1]
+                    if len(two_closest) > 1:
+                        second_closest_dist = two_closest.iloc[1]
                 # Check versus number of pixels squared, since that is faster than square root
                 if closest_dist < 15 * 15:  # TODO: Autodetect this or something
                     break  # Close enough; stop looking further back
