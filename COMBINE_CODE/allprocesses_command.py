@@ -16,7 +16,7 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
     matches['frame_num'] = keypoint_df.frame_num
     # Count low-confidence detections as non-detections because they can be misleading
     matches[keypoint_num + '_detected'] = \
-        (keypoint_df[keypoint_num + '_conf'] > .3).astype(int)
+        (keypoint_df[keypoint_num + '_conf'] > .3) * 1
     prev_frames = deque(maxlen=lookback)  # Number of frames into the past to search for matches
     # Iterate over only successful detection rows to prevent matches to low-confidence skeletons
     detected_df = keypoint_df[matches[keypoint_num + '_detected'] == 1]
@@ -25,6 +25,10 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
         prev_frames.append(next(frame_iter)[1])  # Skip to starting on second frame
     except StopIteration:  # No usable data for this keypoint
         pass
+    row_indices = []
+    closest_indices = []
+    closest_dists = []
+    second_closest_dists = []
     for _, frame in tqdm(frame_iter, total=detected_df.frame_num.nunique() - 1,
                          desc='Matching ' + str(keypoint_num)):
         for row_i, row in frame.iterrows():  # for each person in current frame
@@ -32,8 +36,8 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
             second_closest_dist = None
             index_closest = None
             for lag in range(-1, -len(prev_frames) - 1, -1):  # Look backward in time
-                x_diff = (prev_frames[lag][keypoint_num + '_x'] - row[keypoint_num + '_x'])
-                y_diff = (prev_frames[lag][keypoint_num + '_y'] - row[keypoint_num + '_y'])
+                x_diff = prev_frames[lag][keypoint_num + '_x'] - row[keypoint_num + '_x']
+                y_diff = prev_frames[lag][keypoint_num + '_y'] - row[keypoint_num + '_y']
                 # Calculate squared distances; no need to take square root
                 two_closest = (x_diff * x_diff + y_diff * y_diff).nsmallest(2)
                 if closest_dist is None or two_closest.iloc[0] < closest_dist:
@@ -43,10 +47,14 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
                 # Check versus number of pixels squared, since that is faster than square root
                 if closest_dist < 15 * 15:  # TODO: Autodetect this or something
                     break  # Close enough; stop looking further back
-            matches.at[row_i, [keypoint_num + '_closest_index', keypoint_num + '_closest_dist',
-                               keypoint_num + '_second_closest_dist']] = \
-                [index_closest, closest_dist, second_closest_dist]
+            row_indices.append(row_i)
+            closest_indices.append(index_closest)
+            closest_dists.append(closest_dist)
+            second_closest_dists.append(second_closest_dist)
         prev_frames.append(frame)
+    matches.loc[row_indices, keypoint_num + '_closest_index'] = closest_indices
+    matches.loc[row_indices, keypoint_num + '_closest_dist'] = closest_dists
+    matches.loc[row_indices, keypoint_num + '_second_closest_dist'] = second_closest_dists
     return matches.drop(columns='frame_num')
 
 
