@@ -6,7 +6,6 @@ from collections import deque, defaultdict
 
 import pandas as pd
 import numpy as np
-from scipy.spatial import distance
 from tqdm import tqdm
 import os.path
 
@@ -33,13 +32,16 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
             second_closest_dist = None
             index_closest = None
             for lag in range(-1, -len(prev_frames) - 1, -1):  # Look backward in time
-                for indexn, rown in prev_frames[lag].iterrows():
-                    dist = distance.euclidean([row[1:3]], [rown[1:3]])
-                    if closest_dist is None or dist < closest_dist:
-                        second_closest_dist = closest_dist
-                        closest_dist = dist
-                        index_closest = indexn
-                if closest_dist < 15:  # TODO: Autodetect this or something
+                x_diff = (prev_frames[lag][keypoint_num + '_x'] - row[keypoint_num + '_x'])
+                y_diff = (prev_frames[lag][keypoint_num + '_y'] - row[keypoint_num + '_y'])
+                # Calculate squared distances; no need to take square root
+                two_closest = (x_diff * x_diff + y_diff * y_diff).nsmallest(2)
+                if closest_dist is None or two_closest.iloc[0] < closest_dist:
+                    closest_dist = two_closest.iloc[0]
+                    index_closest = two_closest.index[0]
+                    second_closest_dist = two_closest.iloc[1]
+                # Check versus number of pixels squared, since that is faster than square root
+                if closest_dist < 15 * 15:  # TODO: Autodetect this or something
                     break  # Close enough; stop looking further back
             matches.at[row_i, [keypoint_num + '_closest_index', keypoint_num + '_closest_dist',
                                keypoint_num + '_second_closest_dist']] = \
