@@ -33,7 +33,7 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
                          desc='Matching ' + str(keypoint_num)):
         for row_i, row in frame.iterrows():  # for each person in current frame
             closest_dist = None
-            second_closest_dist = None
+            second_closest_dist = 10000000
             index_closest = None
             for lag in range(-1, -len(prev_frames) - 1, -1):  # Look backward in time
                 x_diff = prev_frames[lag][keypoint_num + '_x'] - row[keypoint_num + '_x']
