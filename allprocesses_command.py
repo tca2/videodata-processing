@@ -1,14 +1,11 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+import os
 import argparse
 import re
 from collections import deque, defaultdict
 
 import pandas as pd
 import numpy as np
-from scipy.spatial import distance
 from tqdm import tqdm
-import os.path
 
 
 # Calculate closest distance, closest distance owner, second closest distance
@@ -17,7 +14,7 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
     matches['frame_num'] = keypoint_df.frame_num
     # Count low-confidence detections as non-detections because they can be misleading
     matches[keypoint_num + '_detected'] = \
-        (keypoint_df[keypoint_num + '_conf'] > .3).astype(int)
+        (keypoint_df[keypoint_num + '_conf'] > .3) * 1
     prev_frames = deque(maxlen=lookback)  # Number of frames into the past to search for matches
     # Iterate over only successful detection rows to prevent matches to low-confidence skeletons
     detected_df = keypoint_df[matches[keypoint_num + '_detected'] == 1]
@@ -26,25 +23,37 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
         prev_frames.append(next(frame_iter)[1])  # Skip to starting on second frame
     except StopIteration:  # No usable data for this keypoint
         pass
+    row_indices = []
+    closest_indices = []
+    closest_dists = []
+    second_closest_dists = []
     for _, frame in tqdm(frame_iter, total=detected_df.frame_num.nunique() - 1,
                          desc='Matching ' + str(keypoint_num)):
         for row_i, row in frame.iterrows():  # for each person in current frame
             closest_dist = None
-            second_closest_dist = None
+            second_closest_dist = 10000000
             index_closest = None
             for lag in range(-1, -len(prev_frames) - 1, -1):  # Look backward in time
-                for indexn, rown in prev_frames[lag].iterrows():
-                    dist = distance.euclidean([row[1:3]], [rown[1:3]])
-                    if closest_dist is None or dist < closest_dist:
-                        second_closest_dist = closest_dist
-                        closest_dist = dist
-                        index_closest = indexn
-                if closest_dist < 15:  # TODO: Autodetect this or something
+                x_diff = prev_frames[lag][keypoint_num + '_x'] - row[keypoint_num + '_x']
+                y_diff = prev_frames[lag][keypoint_num + '_y'] - row[keypoint_num + '_y']
+                # Calculate squared distances; no need to take square root
+                two_closest = (x_diff * x_diff + y_diff * y_diff).nsmallest(2)
+                if closest_dist is None or two_closest.iloc[0] < closest_dist:
+                    closest_dist = two_closest.iloc[0]
+                    index_closest = two_closest.index[0]
+                    if len(two_closest) > 1:
+                        second_closest_dist = two_closest.iloc[1]
+                # Check versus number of pixels squared, since that is faster than square root
+                if closest_dist < 15 * 15:  # TODO: Autodetect this or something
                     break  # Close enough; stop looking further back
-            matches.at[row_i, [keypoint_num + '_closest_index', keypoint_num + '_closest_dist',
-                               keypoint_num + '_second_closest_dist']] = \
-                [index_closest, closest_dist, second_closest_dist]
+            row_indices.append(row_i)
+            closest_indices.append(index_closest)
+            closest_dists.append(closest_dist)
+            second_closest_dists.append(second_closest_dist)
         prev_frames.append(frame)
+    matches.loc[row_indices, keypoint_num + '_closest_index'] = closest_indices
+    matches.loc[row_indices, keypoint_num + '_closest_dist'] = closest_dists
+    matches.loc[row_indices, keypoint_num + '_second_closest_dist'] = second_closest_dists
     return matches.drop(columns='frame_num')
 
 
@@ -99,7 +108,7 @@ def assign_person_ids(matches_df):
     return df
 
 
-def postprocess_ids(ids_df, orig_df):
+def postprocess_ids(ids_df, orig_df, out_fname):
     df = ids_df.copy()
     keypoints = [c.replace('_closest_index', '') for c in df.columns
                  if c.endswith('_closest_index')]
@@ -134,31 +143,35 @@ def postprocess_ids(ids_df, orig_df):
     print('Merged split skeletons and dropped', orig_row_count - len(df), 'rows')
 
     # Interpolate missing skeletons
-    interpolated_dfs = []
+    # Write directly to file to save memory; otherwise this step often crashes
     coord_columns = ['frame_num'] + coord_columns  # Interpolate frame number as well
-    for pid, pid_df in tqdm(df.groupby('person_id'), 'Interpolating', total=df.person_id.nunique()):
-        # Use Pandas built-in interpolate by constructing a DataFrame for this person that includes
-        # NaNs where appropriate for the rows to be interpolated
-        if pid_df.frame_num.max() - pid_df.frame_num.min() == len(pid_df) - 1:
-            # Nothing to interpolate
-            interpolated_dfs.append(pid_df)
-        else:
-            new_df = pd.DataFrame(
-                index=np.arange(pid_df.frame_num.min(), pid_df.frame_num.max() + 1))
-            for col in pid_df.columns:  # Copy over column structure
-                new_df.insert(len(new_df.columns), col, pd.Series(dtype=pid_df[col].dtype))
-            new_df.loc[pid_df.frame_num] = pid_df.values  # Copy existing data
-            new_df['person_id'] = pid  # Fill in any gaps
-            # Interpolate only the frame number and position columns
-            new_df[coord_columns] = new_df[coord_columns].interpolate()
-            assert not new_df[coord_columns].isna().any().any(), 'Interpolating skeletons failed'
-            interpolated_dfs.append(new_df)
+    first_pid = True
+    with open(out_fname, 'w', newline='', encoding='utf8') as ofile:
+        for pid, pid_df in tqdm(df.groupby('person_id'), 'Interpolating',
+                                total=df.person_id.nunique()):
+            # Use Pandas built-in interpolate by constructing a DataFrame for this person that
+            # includes NaNs where appropriate for the rows to be interpolated
+            if pid_df.frame_num.max() - pid_df.frame_num.min() == len(pid_df) - 1:
+                # Nothing to interpolate
+                new_df = pid_df
+            else:
+                new_df = pd.DataFrame(
+                    index=np.arange(pid_df.frame_num.min(), pid_df.frame_num.max() + 1))
+                for col in pid_df.columns:  # Copy over column structure
+                    new_df.insert(len(new_df.columns), col, pd.Series(dtype=pid_df[col].dtype))
+                new_df.loc[pid_df.frame_num] = pid_df.values  # Copy existing data
+                new_df['person_id'] = pid  # Fill in any gaps
+                # Interpolate only the frame number and position columns
+                new_df[coord_columns] = new_df[coord_columns].interpolate()
+                assert not new_df[coord_columns].isna().any(None), 'Skeleton interpolation failed'
+            if first_pid:  # Write header for first PID only
+                new_df.to_csv(ofile, index=False)
+                first_pid = False
+            else:
+                new_df.to_csv(ofile, index=False, header=False)
 
-    # Merge interpolated values to form combined DataFrame
-    return pd.concat(interpolated_dfs)
 
-
-def track_file(fname, region, lookback):
+def track_file(fname, region, lookback, out_fname):
     # Load data and apply the first step: forming a rough linked list of closest distances
     df = pd.read_csv(fname)
     keypoints = [c.replace('_x', '') for c in df.columns if re.search(r'^keypoint\d*_x', c)]
@@ -182,8 +195,8 @@ def track_file(fname, region, lookback):
 
     # Assign person IDs
     ids_df = assign_person_ids(dist_df)
-    # Postprocess the ID assignment a bit further
-    return postprocess_ids(ids_df, df)
+    # Postprocess the ID assignment a bit further and save to output file
+    postprocess_ids(ids_df, df, out_fname)
 
 
 if __name__ == '__main__':
@@ -204,7 +217,8 @@ if __name__ == '__main__':
     parser.add_argument('--lookback', type=int, default=5,
                         help='Look back up to this many frames to find matches (default 5)')
     parser.add_argument('--outputfolder', type=str, default='',
-                        help='Folder destination (relative or absolute path) to save the output (default is current directory)')
+                        help='Folder destination (relative or absolute path) to save the output '
+                        '(default is current directory)')
     args = parser.parse_args()
 
     if args.file:
@@ -212,13 +226,11 @@ if __name__ == '__main__':
             raise NotImplementedError('OpenPose tracking not yet implemented')
         if not args.only_openpose:  # Do tracking
             if args.region:  # Do tracking while restricting to user defined region
-                df = track_file(args.file, args.region, args.lookback)
-                #df.to_csv(args.outputfolder+'/'+args.file + '-tracked-region-'+str(regionvals)+'.csv', index=False)
-                df.to_csv(args.file + '-tracked-region-'+str(regionvals)+'.csv', index=False)
-            else: # Do tracking without restricting region
-                df = track_file(args.file, args.region, args.lookback)
-                #df.to_csv(args.outputfolder+'/'+args.file + '-tracked.csv', index=False)
-                df.to_csv(args.file + '-tracked.csv', index=False)
-
+                out_fname = os.path.join(args.outputfolder, os.path.basename(args.file) +
+                                         '-tracked-region-' + str(regionvals) + '.csv')
+            else:  # Do tracking without restricting region
+                out_fname = os.path.join(args.outputfolder, os.path.basename(args.file) +
+                                         '-tracked.csv')
+            track_file(args.file, args.region, args.lookback, out_fname)
         else:
             raise NotImplementedError('--dir functionality not yet implemented')
