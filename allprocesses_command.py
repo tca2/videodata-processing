@@ -184,8 +184,6 @@ def track_file(fname, region, lookback, out_fname):
             df = df[((df[kp + '_x'] == 0) | ((df[kp + '_x'] > x1) & (df[kp + '_x'] < x2))) &
                     ((df[kp + '_y'] == 0) | ((df[kp + '_y'] > y1) & (df[kp + '_y'] < y2)))]
         print('Selected', len(df), 'of', orig_row_count, 'rows from region:', region)
-        global regionvals
-        regionvals = region
     # TODO: Restrict keypoints to only certain ones for speed/accuracy improvement
     keypoint_dfs = {c: df[['frame_num', c + '_x', c + '_y', c + '_conf']] for c in keypoints}
     dist_df = pd.DataFrame({'frame_num': df.frame_num})
@@ -227,7 +225,7 @@ if __name__ == '__main__':
         if not args.only_openpose:  # Do tracking
             if args.region:  # Do tracking while restricting to user defined region
                 out_fname = os.path.join(args.outputfolder, os.path.basename(args.file) +
-                                         '-tracked-region-' + str(regionvals) + '.csv')
+                                         '-tracked-region-' + str(args.region) + '.csv')
             else:  # Do tracking without restricting region
                 out_fname = os.path.join(args.outputfolder, os.path.basename(args.file) +
                                          '-tracked.csv')
