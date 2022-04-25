@@ -73,8 +73,9 @@ def assign_person_ids(matches_df):
     df.insert(1, 'person_id', '')
     for row_i, row in df[::-1].iterrows():
         # Select keypoints that were good enough matches to participate in the overall match vote
-        ambig_kps = [k for k in keypoints if row[k + '_second_closest_dist'] < 15]
-        voting_kps = [k for k in keypoints if row[k + '_closest_dist'] < 15 and k not in ambig_kps]
+        ambig_kps = [k for k in keypoints if row[k + '_second_closest_dist'] < 15 * 15]
+        voting_kps = [k for k in keypoints if row[k + '_closest_dist'] < 15 * 15
+                      and k not in ambig_kps]
 
         # First try to assign a final ID to the current row based on its matches
         if row_i in proposed_ids.keys():
@@ -125,8 +126,8 @@ def postprocess_ids(ids_df, orig_df, out_fname):
             merged_keypoints = {}
             for _, row in skeleton_rows.iterrows():
                 for kp in keypoints:
-                    if row[kp + '_detected'] and row[kp + '_closest_dist'] < 15 and \
-                            row[kp + '_second_closest_dist'] > 15:
+                    if row[kp + '_detected'] and row[kp + '_closest_dist'] < 15 * 15 and \
+                            row[kp + '_second_closest_dist'] > 15 * 15:
                         assert kp + '_detected' not in merged_keypoints, \
                             'Tried to merge conflicting skeletons: frame=' + \
                             str(frame_df.frame_num.iloc[0]) + ', person ID=' + person_id
