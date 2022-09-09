@@ -15,9 +15,3 @@ Use `concat_JSON_files.py` to concatenate all JSON files into a formatted single
 Tracking processing is completed through `allprocesses_command.py`, and arguments are handled through Python argparse. More details about possible arguments can be found toward the end of the script. Currently the "--only_track" argument must be used, as OpenPose processing code is yet to be integrated. 
 
 Processing will include calculating the closest distance (in pixels), closest distance owner (row), and second closest distance (in pixels), then subsequently tracking the skeletons and assigning IDs. In order to partially account for OpenPose's inconsistent detection of skeletons throughout frames.
-
-## Referring to this work
-
-If you would like to cite our work, please use the following citation (APA):
-
-Hur, P., & Bosch, N. (2022, March). Tracking Individuals in Classroom Videos via Post-processing OpenPose Data. In LAK22: 12th International Learning Analytics and Knowledge Conference (pp. 465-471).
