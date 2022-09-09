@@ -1,6 +1,8 @@
 # videodata-processing
 
-This repository contains files for processing [OpenPose](https://github.com/CMU-Perceptual-Computing-Lab/openpose) JSON output. Background for this work, including motivation and results, are written in detail in our paper ["Tracking Individuals in Classroom Videos via Post-processing OpenPose Data"](https://dl.acm.org/doi/10.1145/3506860.3506888), which was presented at the International Learning Analytics and Knowledge (LAK) Conference 2022. 
+This repository contains files for processing [OpenPose](https://github.com/CMU-Perceptual-Computing-Lab/openpose) JSON output. Background for this work, including motivation and results, are written in detail in our paper which was presented at the International Learning Analytics and Knowledge (LAK) Conference 2022.
+
+> Hur, P., & Bosch, N. (2022, March). ["Tracking Individuals in Classroom Videos via Post-processing OpenPose Data"](https://dl.acm.org/doi/10.1145/3506860.3506888). In LAK22: 12th International Learning Analytics and Knowledge Conference (pp. 465-471).
 
 ## Preparation
 
