@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 
 # Calculate closest distance, closest distance owner, second closest distance
-def calculate_distances(keypoint_df, keypoint_num, lookback):
+def calculate_distances(keypoint_df, keypoint_num, lookback, match_dist):
     matches = pd.DataFrame(index=keypoint_df.index)
     matches['frame_num'] = keypoint_df.frame_num
     # Count low-confidence detections as non-detections because they can be misleading
@@ -18,7 +18,7 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
     prev_frames = deque(maxlen=lookback)  # Number of frames into the past to search for matches
     # Iterate over only successful detection rows to prevent matches to low-confidence skeletons
     detected_df = keypoint_df[matches[keypoint_num + '_detected'] == 1]
-    frame_iter = iter(detected_df.groupby(['frame_num']))
+    frame_iter = iter(detected_df.groupby('frame_num'))
     try:
         prev_frames.append(next(frame_iter)[1])  # Skip to starting on second frame
     except StopIteration:  # No usable data for this keypoint
@@ -44,7 +44,7 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
                     if len(two_closest) > 1:
                         second_closest_dist = two_closest.iloc[1]
                 # Check versus number of pixels squared, since that is faster than square root
-                if closest_dist < 15 * 15:  # TODO: Autodetect this or something
+                if closest_dist < match_dist:
                     break  # Close enough; stop looking further back
             row_indices.append(row_i)
             closest_indices.append(index_closest)
@@ -58,11 +58,13 @@ def calculate_distances(keypoint_df, keypoint_num, lookback):
 
 
 # Based on a set of closest/second-closest distances, try to assign person IDs
-def assign_person_ids(matches_df):
+def assign_person_ids(matches_df, match_dist, ignore_kp_nums):
     df = matches_df.copy()
     # Precalculate sets of detected keypoints to improve speed
     keypoints = [c.replace('_closest_index', '') for c in matches_df.columns
                  if c.endswith('_closest_index')]
+    keypoints = [k for k in keypoints
+                 if not any(k == 'keypoint' + str(n) for n in ignore_kp_nums)]
     detected_kps = {i: set([k for k in keypoints if r[k + '_detected']])
                     for i, r in tqdm(df.iterrows(), 'Counting detected keypoints', total=len(df))}
     # Go through frames in reverse order to follow links to earlier frames. Then, if we reach a
@@ -73,8 +75,8 @@ def assign_person_ids(matches_df):
     df.insert(1, 'person_id', '')
     for row_i, row in df[::-1].iterrows():
         # Select keypoints that were good enough matches to participate in the overall match vote
-        ambig_kps = [k for k in keypoints if row[k + '_second_closest_dist'] < 15 * 15]
-        voting_kps = [k for k in keypoints if row[k + '_closest_dist'] < 15 * 15
+        ambig_kps = [k for k in keypoints if row[k + '_second_closest_dist'] < match_dist]
+        voting_kps = [k for k in keypoints if row[k + '_closest_dist'] < match_dist
                       and k not in ambig_kps]
 
         # First try to assign a final ID to the current row based on its matches
@@ -94,7 +96,7 @@ def assign_person_ids(matches_df):
         # Go through each match and count it as a match unless it conflicts with one of the matches
         # with a better match.
         used_kps = set()
-        for match_i, num_votes in tally.iteritems():  # Descending (most votes first)
+        for match_i, num_votes in tally.items():  # Descending (most votes first)
             # Keypoints in common among this person and the potential match
             common_kps = detected_kps[row_i].intersection(detected_kps[match_i])
             if common_kps.intersection(used_kps):
@@ -109,10 +111,12 @@ def assign_person_ids(matches_df):
     return df
 
 
-def postprocess_ids(ids_df, orig_df, out_fname):
+def postprocess_ids(ids_df, orig_df, out_fname, match_dist, ignore_kp_nums):
     df = ids_df.copy()
     keypoints = [c.replace('_closest_index', '') for c in df.columns
                  if c.endswith('_closest_index')]
+    keypoints = [k for k in keypoints
+                 if not any(k == 'keypoint' + str(n) for n in ignore_kp_nums)]
     coord_columns = [kp + '_x' for kp in keypoints] + [kp + '_y' for kp in keypoints]
     df[coord_columns] = orig_df[coord_columns]
 
@@ -126,8 +130,8 @@ def postprocess_ids(ids_df, orig_df, out_fname):
             merged_keypoints = {}
             for _, row in skeleton_rows.iterrows():
                 for kp in keypoints:
-                    if row[kp + '_detected'] and row[kp + '_closest_dist'] < 15 * 15 and \
-                            row[kp + '_second_closest_dist'] > 15 * 15:
+                    if row[kp + '_detected'] and row[kp + '_closest_dist'] < match_dist and \
+                            row[kp + '_second_closest_dist'] > match_dist:
                         assert kp + '_detected' not in merged_keypoints, \
                             'Tried to merge conflicting skeletons: frame=' + \
                             str(frame_df.frame_num.iloc[0]) + ', person ID=' + person_id
@@ -157,14 +161,13 @@ def postprocess_ids(ids_df, orig_df, out_fname):
                 new_df = pid_df
             else:
                 new_df = pd.DataFrame(
+                    {col: pd.Series(dtype=typ) for col, typ in pid_df.dtypes.items()},
                     index=np.arange(pid_df.frame_num.min(), pid_df.frame_num.max() + 1))
-                for col in pid_df.columns:  # Copy over column structure
-                    new_df.insert(len(new_df.columns), col, pd.Series(dtype=pid_df[col].dtype))
                 new_df.loc[pid_df.frame_num] = pid_df.values  # Copy existing data
                 new_df['person_id'] = pid  # Fill in any gaps
                 # Interpolate only the frame number and position columns
                 new_df[coord_columns] = new_df[coord_columns].interpolate()
-                assert not new_df[coord_columns].isna().any(None), 'Skeleton interpolation failed'
+                assert not new_df[coord_columns].isna().any(axis=None), 'Skeleton interpolation failed'
             if first_pid:  # Write header for first PID only
                 new_df.to_csv(ofile, index=False)
                 first_pid = False
@@ -172,10 +175,12 @@ def postprocess_ids(ids_df, orig_df, out_fname):
                 new_df.to_csv(ofile, index=False, header=False)
 
 
-def track_file(fname, region, lookback, out_fname):
+def track_file(fname, region, lookback, match_dist, ignore_kp_nums, out_fname):
     # Load data and apply the first step: forming a rough linked list of closest distances
     df = pd.read_csv(fname)
     keypoints = [c.replace('_x', '') for c in df.columns if re.search(r'^keypoint\d*_x', c)]
+    keypoints = [k for k in keypoints
+                 if not any(k == 'keypoint' + str(n) for n in ignore_kp_nums)]
     # If using a specific region, use only keypoints from that region; all keypoints from the
     # skeleton must be in this region
     if region:
@@ -189,13 +194,13 @@ def track_file(fname, region, lookback, out_fname):
     keypoint_dfs = {c: df[['frame_num', c + '_x', c + '_y', c + '_conf']] for c in keypoints}
     dist_df = pd.DataFrame({'frame_num': df.frame_num})
     for kp, kp_df in keypoint_dfs.items():
-        kp_dist_df = calculate_distances(kp_df, kp, lookback)
+        kp_dist_df = calculate_distances(kp_df, kp, lookback, match_dist)
         dist_df[kp_dist_df.columns] = kp_dist_df
 
     # Assign person IDs
-    ids_df = assign_person_ids(dist_df)
+    ids_df = assign_person_ids(dist_df, match_dist, ignore_kp_nums)
     # Postprocess the ID assignment a bit further and save to output file
-    postprocess_ids(ids_df, df, out_fname)
+    postprocess_ids(ids_df, df, out_fname, match_dist, ignore_kp_nums)
 
 
 if __name__ == '__main__':
@@ -218,6 +223,12 @@ if __name__ == '__main__':
     parser.add_argument('--outputfolder', type=str, default='',
                         help='Folder destination (relative or absolute path) to save the output '
                         '(default is current directory)')
+    parser.add_argument('--match-dist', type=float, default=15,
+                        help='Count two keypoints as matching within this distance, '
+                        'in pixels (default 15); a rough rule of thumb is 1.5%% of the '
+                        'vertical resolution of your video')
+    parser.add_argument('--ignore-keypoints', nargs='+', type=int, default=[],
+                        help='Ignore some keypoint(s) identified as a list of numbers')
     args = parser.parse_args()
 
     if args.file:
@@ -230,6 +241,7 @@ if __name__ == '__main__':
             else:  # Do tracking without restricting region
                 out_fname = os.path.join(args.outputfolder, os.path.basename(args.file) +
                                          '-tracked.csv')
-            track_file(args.file, args.region, args.lookback, out_fname)
+            track_file(args.file, args.region, args.lookback, args.match_dist ** 2,
+                       args.ignore_keypoints, out_fname)
         else:
             raise NotImplementedError('--dir functionality not yet implemented')
